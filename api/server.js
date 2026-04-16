@@ -6048,3 +6048,66 @@ app.post('/superadmin/password/change', requireSuperAdmin, async (req, res, next
     next(err);
   }
 });
+
+app.post('/superadmin/password/recover', async (req, res, next) => {
+  try {
+    if (!resyncToken) {
+      return res.status(503).json({ error: 'Password recovery is not configured' });
+    }
+    if (!isInternalTokenAuthorized(req)) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    const email = normalizeStaffEmail(req.body?.email || superAdminDefaultEmail);
+    const newPassword = String(req.body?.newPassword || req.body?.password || '');
+    const confirmPassword = String(req.body?.confirmPassword || newPassword);
+
+    if (!email || !newPassword || !confirmPassword) {
+      return res.status(400).json({ error: 'email, newPassword, and confirmPassword are required' });
+    }
+    if (newPassword.length < 6) {
+      return res.status(400).json({ error: 'New password must be at least 6 characters' });
+    }
+    if (newPassword !== confirmPassword) {
+      return res.status(400).json({ error: 'New password and confirmation do not match' });
+    }
+
+    const result = await pool.query(
+      `UPDATE staff_accounts
+       SET password_hash = $1, is_active = TRUE, updated_at = NOW()
+       WHERE email = $2
+         AND (LOWER(role) = 'super admin' OR LOWER(role) = 'superadmin')
+       RETURNING email, full_name, role, is_active`,
+      [hashPassword(newPassword), email]
+    );
+
+    if (!result.rows.length) {
+      return res.status(404).json({ error: 'Super admin account not found' });
+    }
+
+    const liveSessions = await getLiveSessionsSnapshot();
+    const matchingTokens = liveSessions
+      .filter((session) => normalizeStaffEmail(session.email) === email)
+      .map((session) => session.token)
+      .filter(Boolean);
+
+    for (const token of matchingTokens) {
+      await redisClient.del(`${redisSessionKeyPrefix}${token}`);
+    }
+
+    await writeAuditLog({
+      actor: 'internal-token',
+      action: 'superadmin.password_recover',
+      targetType: 'staff',
+      targetId: email,
+      afterJson: {
+        email,
+        revokedSessions: matchingTokens.length,
+      },
+    });
+
+    res.json({ ok: true, email, revokedSessions: matchingTokens.length });
+  } catch (err) {
+    next(err);
+  }
+});

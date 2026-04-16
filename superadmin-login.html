@@ -10,7 +10,7 @@
     <link
         href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@600;700;800&display=swap"
         rel="stylesheet" />
-    <link rel="stylesheet" href="superadmin-login.css" />
+    <link rel="stylesheet" href="superadmin-login.css?v=20260416a" />
 </head>
 
 <body>
@@ -45,6 +45,33 @@
                 </button>
             </form>
 
+            <section class="recover" aria-label="Recover Super Admin Password">
+                <div class="recover-title">Reset Super Admin Password</div>
+
+                <form id="recoverForm" class="recover-panel" novalidate aria-live="polite">
+                    <p class="recover-help">Use your server RESYNC_TOKEN to reset the super admin password.</p>
+
+                    <label class="label" for="recoverToken">Resync Token</label>
+                    <input id="recoverToken" type="password" placeholder="Enter RESYNC_TOKEN" autocomplete="off" required />
+
+                    <label class="label" for="recoverEmail">Super Admin Username/Email</label>
+                    <input id="recoverEmail" type="text" placeholder="e.g. unitaryx" required />
+
+                    <label class="label" for="recoverNewPassword">New Password</label>
+                    <input id="recoverNewPassword" type="password" placeholder="Min 6 characters" required />
+
+                    <label class="label" for="recoverConfirmPassword">Confirm New Password</label>
+                    <input id="recoverConfirmPassword" type="password" placeholder="Re-enter new password" required />
+
+                    <p class="err" id="recoverErr"></p>
+
+                    <button type="submit" class="btn recover-btn" id="recoverBtn">
+                        <span class="btn-text">Reset Super Admin Password</span>
+                        <span class="btn-loader" hidden>Resetting...</span>
+                    </button>
+                </form>
+            </section>
+
             <div class="links">
                 <a href="login.html">Back to Main Login</a>
             </div>
@@ -58,7 +85,7 @@
 
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
-    <script src="superadmin-login.js?v=20260402c"></script>
+    <script src="superadmin-login.js?v=20260416a"></script>
 </body>
 
 </html>
