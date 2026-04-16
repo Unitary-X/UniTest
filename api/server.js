@@ -5860,3 +5860,191 @@ app.post('/internal/cleanup/uploads', async (req, res, next) => {
     next(err);
   }
 });
+
+async function deleteStudentCascade(client, regNo) {
+  await client.query('DELETE FROM submissions WHERE roll_number = $1', [regNo]);
+  await client.query('UPDATE broadcast_messages SET target_reg_no = NULL, updated_at = NOW() WHERE target_reg_no = $1', [regNo]);
+  await client.query('DELETE FROM students WHERE reg_no = $1', [regNo]);
+}
+
+app.post('/admin/students/bulk-delete', requireSuperAdmin, async (req, res, next) => {
+  try {
+    const rawRegNos = Array.isArray(req.body?.regNos) ? req.body.regNos : [];
+    const requestedRegNos = rawRegNos
+      .map((value) => normalizeRegNo(value))
+      .filter(Boolean);
+    const regNos = Array.from(new Set(requestedRegNos));
+
+    if (!regNos.length) {
+      return res.status(400).json({ error: 'regNos must contain at least one register number' });
+    }
+    if (regNos.length > 2000) {
+      return res.status(400).json({ error: 'Too many register numbers in one request (max: 2000)' });
+    }
+
+    const matchedStudentsResult = await pool.query(
+      `SELECT reg_no, full_name, stream, section, created_at
+       FROM students
+       WHERE reg_no = ANY($1::text[])
+       ORDER BY reg_no ASC`,
+      [regNos]
+    );
+
+    if (!matchedStudentsResult.rows.length) {
+      return res.status(404).json({ error: 'No matching students found' });
+    }
+
+    const matchedRegNos = new Set(matchedStudentsResult.rows.map((row) => String(row.reg_no || '').trim().toUpperCase()));
+    const missingRegNos = regNos.filter((regNo) => !matchedRegNos.has(regNo));
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      for (const student of matchedStudentsResult.rows) {
+        await deleteStudentCascade(client, String(student.reg_no || '').trim().toUpperCase());
+      }
+      await client.query('COMMIT');
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
+
+    await writeAuditLog({
+      actor: req.auth?.email || 'superadmin',
+      action: 'student.bulk_delete',
+      targetType: 'student',
+      targetId: 'bulk',
+      beforeJson: {
+        requestedCount: regNos.length,
+        deletedCount: matchedStudentsResult.rows.length,
+        missingCount: missingRegNos.length,
+        deletedRegNos: matchedStudentsResult.rows.map((row) => row.reg_no),
+        missingRegNos,
+      },
+      afterJson: { deleted: true },
+    });
+
+    res.json({
+      ok: true,
+      requestedCount: regNos.length,
+      deletedCount: matchedStudentsResult.rows.length,
+      missingCount: missingRegNos.length,
+      missingRegNos,
+      deletedStudents: matchedStudentsResult.rows,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.delete('/admin/students', requireSuperAdmin, async (req, res, next) => {
+  try {
+    const confirmText = String(req.body?.confirmText || '').trim();
+    if (confirmText !== 'DELETE_ALL_STUDENTS') {
+      return res.status(400).json({ error: 'Invalid confirmation text' });
+    }
+
+    const studentsResult = await pool.query(
+      `SELECT reg_no, full_name, stream, section, created_at
+       FROM students
+       ORDER BY reg_no ASC`
+    );
+
+    if (!studentsResult.rows.length) {
+      return res.json({ ok: true, deletedCount: 0, deletedStudents: [] });
+    }
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      for (const student of studentsResult.rows) {
+        await deleteStudentCascade(client, String(student.reg_no || '').trim().toUpperCase());
+      }
+      await client.query('COMMIT');
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
+
+    await writeAuditLog({
+      actor: req.auth?.email || 'superadmin',
+      action: 'student.delete_all',
+      targetType: 'student',
+      targetId: 'all',
+      beforeJson: {
+        deletedCount: studentsResult.rows.length,
+        deletedRegNos: studentsResult.rows.map((row) => row.reg_no),
+      },
+      afterJson: { deleted: true },
+    });
+
+    res.json({
+      ok: true,
+      deletedCount: studentsResult.rows.length,
+      deletedStudents: studentsResult.rows,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.post('/superadmin/password/change', requireSuperAdmin, async (req, res, next) => {
+  try {
+    const email = normalizeStaffEmail(req.auth?.email || '');
+    const currentPassword = String(req.body?.currentPassword || '');
+    const newPassword = String(req.body?.newPassword || '');
+    const confirmPassword = String(req.body?.confirmPassword || '');
+
+    if (!email || !currentPassword || !newPassword || !confirmPassword) {
+      return res.status(400).json({ error: 'Current password, new password, and confirmation are required' });
+    }
+    if (newPassword.length < 6) {
+      return res.status(400).json({ error: 'New password must be at least 6 characters' });
+    }
+    if (newPassword !== confirmPassword) {
+      return res.status(400).json({ error: 'New password and confirmation do not match' });
+    }
+
+    const accountResult = await pool.query(
+      `SELECT email, password_hash
+       FROM staff_accounts
+       WHERE email = $1 AND is_active = TRUE
+       LIMIT 1`,
+      [email]
+    );
+    if (!accountResult.rows.length) {
+      return res.status(404).json({ error: 'Super admin account not found' });
+    }
+
+    const account = accountResult.rows[0];
+    if (!verifyPassword(currentPassword, account.password_hash)) {
+      return res.status(401).json({ error: 'Current password is incorrect' });
+    }
+
+    if (verifyPassword(newPassword, account.password_hash)) {
+      return res.status(400).json({ error: 'New password must be different from the current password' });
+    }
+
+    await pool.query(
+      `UPDATE staff_accounts
+       SET password_hash = $1, updated_at = NOW()
+       WHERE email = $2`,
+      [hashPassword(newPassword), email]
+    );
+
+    await writeAuditLog({
+      actor: email,
+      action: 'superadmin.password_change',
+      targetType: 'staff',
+      targetId: email,
+    });
+
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});

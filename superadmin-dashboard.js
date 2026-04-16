@@ -21,6 +21,8 @@
     welcome.textContent = `Welcome, ${session.name || session.email || 'Super Admin'} (${session.role || 'Super Admin'})`;
 
     const toastEl = document.getElementById('toast');
+    const selectedStudentRegNos = new Set();
+
     function toast(msg) {
         toastEl.textContent = msg;
         toastEl.classList.add('show');
@@ -141,20 +143,53 @@
             const payload = await apiJson('/api/admin/students');
             const students = payload.students || [];
 
+            const currentRegNos = new Set(
+                students
+                    .map((student) => String(student.reg_no || '').trim().toUpperCase())
+                    .filter(Boolean)
+            );
+            Array.from(selectedStudentRegNos).forEach((regNo) => {
+                if (!currentRegNos.has(regNo)) {
+                    selectedStudentRegNos.delete(regNo);
+                }
+            });
+
             if (!students.length) {
+                selectedStudentRegNos.clear();
                 list.innerHTML = '<div class="list-item"><div class="meta">No students found.</div></div>';
+                updateStudentSelectionStatus();
                 return;
             }
 
             list.innerHTML = students.map((student) => `
                 <div class="list-item" style="display:flex;justify-content:space-between;align-items:center;gap:12px;">
-                    <div style="flex:1;min-width:0;">
-                        <div class="name">${escapeHtml(student.full_name || '')}</div>
-                        <div class="meta">${escapeHtml(student.reg_no || '')} · ${escapeHtml(student.stream || 'Unspecified')} · ${escapeHtml(student.section || 'Unspecified')}</div>
+                    <div style="display:flex;align-items:center;gap:10px;min-width:0;flex:1;">
+                        <input
+                            class="student-select-checkbox"
+                            type="checkbox"
+                            value="${escapeHtml(student.reg_no || '')}"
+                            ${selectedStudentRegNos.has(String(student.reg_no || '').trim().toUpperCase()) ? 'checked' : ''}
+                            aria-label="Select ${escapeHtml(student.reg_no || '')}"
+                            style="width:16px;height:16px;cursor:pointer;"
+                        />
+                        <div style="flex:1;min-width:0;">
+                            <div class="name">${escapeHtml(student.full_name || '')}</div>
+                            <div class="meta">${escapeHtml(student.reg_no || '')} · ${escapeHtml(student.stream || 'Unspecified')} · ${escapeHtml(student.section || 'Unspecified')}</div>
+                        </div>
                     </div>
                     <button class="btn ghost student-delete-btn" data-reg-no="${escapeHtml(student.reg_no || '')}" data-name="${escapeHtml(student.full_name || '')}" type="button" style="padding:6px 10px;font-size:0.85rem;border-color:#ffb8c7;color:#ffb8c7;">Delete</button>
                 </div>
             `).join('');
+
+            list.querySelectorAll('.student-select-checkbox').forEach((checkbox) => {
+                checkbox.addEventListener('change', () => {
+                    const regNo = String(checkbox.value || '').trim().toUpperCase();
+                    if (!regNo) return;
+                    if (checkbox.checked) selectedStudentRegNos.add(regNo);
+                    else selectedStudentRegNos.delete(regNo);
+                    updateStudentSelectionStatus();
+                });
+            });
 
             list.querySelectorAll('.student-delete-btn').forEach((btn) => {
                 btn.addEventListener('click', async () => {
@@ -166,6 +201,7 @@
                     }
                     try {
                         await apiJson(`/api/admin/students/${encodeURIComponent(regNo)}`, { method: 'DELETE' });
+                        selectedStudentRegNos.delete(String(regNo).trim().toUpperCase());
                         toast(`Student "${name}" deleted`);
                         await refreshStudents();
                     } catch (err) {
@@ -174,9 +210,83 @@
                     }
                 });
             });
+
+            updateStudentSelectionStatus();
         } catch (err) {
             if (String(err?.message || '').toLowerCase().includes('unauthorized')) return;
             list.innerHTML = '<div class="list-item"><div class="meta" style="color:#ffb8c7">Failed to load student list.</div></div>';
+            updateStudentSelectionStatus();
+        }
+    }
+
+    function updateStudentSelectionStatus() {
+        const selectedCount = selectedStudentRegNos.size;
+        const deleteSelectedBtn = document.getElementById('deleteSelectedStudentsBtn');
+        const clearSelectedBtn = document.getElementById('clearSelectedStudentsBtn');
+        if (deleteSelectedBtn) {
+            deleteSelectedBtn.disabled = selectedCount === 0;
+            deleteSelectedBtn.textContent = selectedCount > 0
+                ? `Delete Selected (${selectedCount})`
+                : 'Delete Selected';
+            deleteSelectedBtn.style.opacity = selectedCount === 0 ? '0.6' : '1';
+        }
+        if (clearSelectedBtn) {
+            clearSelectedBtn.disabled = selectedCount === 0;
+            clearSelectedBtn.style.opacity = selectedCount === 0 ? '0.6' : '1';
+        }
+    }
+
+    async function deleteSelectedStudents() {
+        const regNos = Array.from(selectedStudentRegNos);
+        if (!regNos.length) {
+            toast('Select at least one student');
+            return;
+        }
+        if (!confirm(`Delete ${regNos.length} selected students permanently? This cannot be undone.`)) {
+            return;
+        }
+
+        try {
+            const payload = await apiJson('/api/admin/students/bulk-delete', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ regNos }),
+            });
+
+            selectedStudentRegNos.clear();
+            toast(`Deleted ${payload.deletedCount || 0} students`);
+            await refreshStudents();
+        } catch (err) {
+            if (String(err?.message || '').toLowerCase().includes('unauthorized')) return;
+            alert(`Error deleting selected students: ${err.message}`);
+        }
+    }
+
+    async function deleteAllStudents() {
+        const passphrase = prompt('Type DELETE_ALL_STUDENTS to confirm deleting all students:');
+        if (passphrase === null) return;
+        if (passphrase !== 'DELETE_ALL_STUDENTS') {
+            alert('Confirmation text did not match. No data was deleted.');
+            return;
+        }
+
+        if (!confirm('Final confirmation: delete ALL students permanently?')) {
+            return;
+        }
+
+        try {
+            const payload = await apiJson('/api/admin/students', {
+                method: 'DELETE',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ confirmText: passphrase }),
+            });
+
+            selectedStudentRegNos.clear();
+            toast(`Deleted all students (${payload.deletedCount || 0})`);
+            await refreshStudents();
+        } catch (err) {
+            if (String(err?.message || '').toLowerCase().includes('unauthorized')) return;
+            alert(`Error deleting all students: ${err.message}`);
         }
     }
 
@@ -394,6 +504,42 @@
     if (refreshStudentsBtn) {
         refreshStudentsBtn.addEventListener('click', () => refreshStudents());
     }
+
+    const selectAllStudentsBtn = document.getElementById('selectAllStudentsBtn');
+    if (selectAllStudentsBtn) {
+        selectAllStudentsBtn.addEventListener('click', () => {
+            const checkboxes = Array.from(document.querySelectorAll('#studentsList .student-select-checkbox'));
+            checkboxes.forEach((checkbox) => {
+                checkbox.checked = true;
+                const regNo = String(checkbox.value || '').trim().toUpperCase();
+                if (regNo) selectedStudentRegNos.add(regNo);
+            });
+            updateStudentSelectionStatus();
+        });
+    }
+
+    const clearSelectedStudentsBtn = document.getElementById('clearSelectedStudentsBtn');
+    if (clearSelectedStudentsBtn) {
+        clearSelectedStudentsBtn.addEventListener('click', () => {
+            selectedStudentRegNos.clear();
+            document.querySelectorAll('#studentsList .student-select-checkbox').forEach((checkbox) => {
+                checkbox.checked = false;
+            });
+            updateStudentSelectionStatus();
+        });
+    }
+
+    const deleteSelectedStudentsBtn = document.getElementById('deleteSelectedStudentsBtn');
+    if (deleteSelectedStudentsBtn) {
+        deleteSelectedStudentsBtn.addEventListener('click', deleteSelectedStudents);
+    }
+
+    const deleteAllStudentsBtn = document.getElementById('deleteAllStudentsBtn');
+    if (deleteAllStudentsBtn) {
+        deleteAllStudentsBtn.addEventListener('click', deleteAllStudents);
+    }
+
+    updateStudentSelectionStatus();
 
     document.getElementById('refreshBtn').addEventListener('click', refreshStaff);
 
@@ -1529,6 +1675,28 @@
                 </div>
             </div>
 
+            <section class="card" style="margin-bottom:20px;border-color:var(--accent-2);">
+                <h3 style="margin-top:0;margin-bottom:12px;font-size:1rem;">Change Super Admin Password</h3>
+                <div class="row">
+                    <div class="col">
+                        <label for="saCurrentPassword">Current Password</label>
+                        <input id="saCurrentPassword" type="password" placeholder="Enter current password" />
+                    </div>
+                    <div class="col">
+                        <label for="saNewPassword">New Password</label>
+                        <input id="saNewPassword" type="password" placeholder="Min 6 characters" />
+                    </div>
+                    <div class="col">
+                        <label for="saConfirmPassword">Confirm New Password</label>
+                        <input id="saConfirmPassword" type="password" placeholder="Re-enter new password" />
+                    </div>
+                </div>
+                <div class="btn-group" style="margin-top:12px;">
+                    <button class="btn primary" id="saChangePasswordBtn" type="button">Update Super Admin Password</button>
+                </div>
+                <p id="saPasswordMsg" class="msg"></p>
+            </section>
+
             <section class="card" style="margin-bottom:20px;border-color:var(--accent);">
                 <div class="row">
                     <div class="col">
@@ -1581,6 +1749,10 @@
         const listEl = mount.querySelector('#pwdList');
         const summaryEl = mount.querySelector('#pwdSummary');
         const updatedAtEl = mount.querySelector('#pwdUpdatedAt');
+        const saCurrentPasswordEl = mount.querySelector('#saCurrentPassword');
+        const saNewPasswordEl = mount.querySelector('#saNewPassword');
+        const saConfirmPasswordEl = mount.querySelector('#saConfirmPassword');
+        const saPasswordMsgEl = mount.querySelector('#saPasswordMsg');
 
         function setMsg(text, isError = false) {
             msgEl.style.color = isError ? '#ffb8c7' : '#9de9ff';
@@ -1600,6 +1772,55 @@
                 out += chars.charAt(Math.floor(Math.random() * chars.length));
             }
             return out;
+        }
+
+        async function changeSuperAdminPassword() {
+            const currentPassword = String(saCurrentPasswordEl?.value || '');
+            const newPassword = String(saNewPasswordEl?.value || '');
+            const confirmPassword = String(saConfirmPasswordEl?.value || '');
+
+            if (!currentPassword || !newPassword || !confirmPassword) {
+                saPasswordMsgEl.style.color = '#ffb8c7';
+                saPasswordMsgEl.textContent = 'All fields are required';
+                return;
+            }
+
+            if (newPassword.length < 6) {
+                saPasswordMsgEl.style.color = '#ffb8c7';
+                saPasswordMsgEl.textContent = 'New password must be at least 6 characters';
+                return;
+            }
+
+            if (newPassword !== confirmPassword) {
+                saPasswordMsgEl.style.color = '#ffb8c7';
+                saPasswordMsgEl.textContent = 'New password and confirmation do not match';
+                return;
+            }
+
+            try {
+                saPasswordMsgEl.style.color = '#9de9ff';
+                saPasswordMsgEl.textContent = 'Updating super admin password...';
+
+                await apiJson('/api/superadmin/password/change', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        currentPassword,
+                        newPassword,
+                        confirmPassword,
+                    }),
+                });
+
+                saCurrentPasswordEl.value = '';
+                saNewPasswordEl.value = '';
+                saConfirmPasswordEl.value = '';
+                saPasswordMsgEl.style.color = '#9de9ff';
+                saPasswordMsgEl.textContent = 'Super admin password updated successfully';
+                toast('Super admin password changed');
+            } catch (err) {
+                saPasswordMsgEl.style.color = '#ffb8c7';
+                saPasswordMsgEl.textContent = err.message || 'Failed to update super admin password';
+            }
         }
 
         async function loadPasswords() {
@@ -1744,6 +1965,7 @@
             setMsg('Cleared password form');
         });
         mount.querySelector('#pwdRefreshBtn').addEventListener('click', loadPasswords);
+        mount.querySelector('#saChangePasswordBtn')?.addEventListener('click', changeSuperAdminPassword);
         searchEl.addEventListener('input', () => {
             if (quickSearchEl) quickSearchEl.value = searchEl.value;
             loadPasswords();

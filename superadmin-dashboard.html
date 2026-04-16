@@ -128,7 +128,13 @@
                 <section class="card accounts-list-card" style="grid-column: 1 / -1;">
                     <div class="head-row">
                         <h2>Registered Students</h2>
-                        <button class="btn ghost" id="refreshStudentsBtn" type="button">Sync Students</button>
+                        <div class="btn-group" style="max-width: 680px;">
+                            <button class="btn ghost" id="selectAllStudentsBtn" type="button">Select All</button>
+                            <button class="btn ghost" id="clearSelectedStudentsBtn" type="button">Clear</button>
+                            <button class="btn ghost" id="deleteSelectedStudentsBtn" type="button" style="border-color:#ffb8c7;color:#ffb8c7;">Delete Selected</button>
+                            <button class="btn ghost" id="deleteAllStudentsBtn" type="button" style="border-color:#ff8aa2;color:#ff8aa2;">Delete All</button>
+                            <button class="btn ghost" id="refreshStudentsBtn" type="button">Sync Students</button>
+                        </div>
                     </div>
                     <div id="studentsList" class="list"></div>
                 </section>
