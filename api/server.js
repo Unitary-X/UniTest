@@ -1155,29 +1155,29 @@ app.get('/admin/students', requireSuperAdmin, async (_req, res, next) => {
 
 app.delete('/admin/students/:regNo', requireSuperAdmin, async (req, res, next) => {
   try {
-    const regNo = normalizeRegNo(req.params.regNo);
-    if (!regNo) {
+    const requestedRegNo = normalizeRegNo(req.params.regNo);
+    if (!requestedRegNo) {
       return res.status(400).json({ error: 'Invalid regNo' });
     }
 
     const studentResult = await pool.query(
-      `SELECT reg_no, full_name, stream, section, created_at
+      `SELECT BTRIM(reg_no) AS reg_no, full_name, stream, section, created_at
        FROM students
-       WHERE reg_no = $1
+       WHERE UPPER(BTRIM(reg_no)) = UPPER(BTRIM($1))
+       ORDER BY CASE WHEN UPPER(BTRIM(reg_no)) = UPPER($1) THEN 0 ELSE 1 END, created_at DESC
        LIMIT 1`,
-      [regNo]
+      [requestedRegNo]
     );
     if (!studentResult.rows.length) {
       return res.status(404).json({ error: 'Student not found' });
     }
 
     const student = studentResult.rows[0];
+    const regNo = normalizeRegNo(student.reg_no);
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
-      await client.query('DELETE FROM submissions WHERE roll_number = $1', [regNo]);
-      await client.query('UPDATE broadcast_messages SET target_reg_no = NULL, updated_at = NOW() WHERE target_reg_no = $1', [regNo]);
-      await client.query('DELETE FROM students WHERE reg_no = $1', [regNo]);
+      await deleteStudentCascade(client, regNo);
       await client.query('COMMIT');
     } catch (err) {
       await client.query('ROLLBACK');
@@ -5862,9 +5862,18 @@ app.post('/internal/cleanup/uploads', async (req, res, next) => {
 });
 
 async function deleteStudentCascade(client, regNo) {
-  await client.query('DELETE FROM submissions WHERE roll_number = $1', [regNo]);
-  await client.query('UPDATE broadcast_messages SET target_reg_no = NULL, updated_at = NOW() WHERE target_reg_no = $1', [regNo]);
-  await client.query('DELETE FROM students WHERE reg_no = $1', [regNo]);
+  await client.query(
+    'DELETE FROM submissions WHERE UPPER(BTRIM(roll_number)) = UPPER(BTRIM($1))',
+    [regNo]
+  );
+  await client.query(
+    'UPDATE broadcast_messages SET target_reg_no = NULL, updated_at = NOW() WHERE UPPER(BTRIM(target_reg_no)) = UPPER(BTRIM($1))',
+    [regNo]
+  );
+  await client.query(
+    'DELETE FROM students WHERE UPPER(BTRIM(reg_no)) = UPPER(BTRIM($1))',
+    [regNo]
+  );
 }
 
 app.post('/admin/students/bulk-delete', requireSuperAdmin, async (req, res, next) => {
@@ -5883,9 +5892,9 @@ app.post('/admin/students/bulk-delete', requireSuperAdmin, async (req, res, next
     }
 
     const matchedStudentsResult = await pool.query(
-      `SELECT reg_no, full_name, stream, section, created_at
+      `SELECT BTRIM(reg_no) AS reg_no, full_name, stream, section, created_at
        FROM students
-       WHERE reg_no = ANY($1::text[])
+       WHERE UPPER(BTRIM(reg_no)) = ANY($1::text[])
        ORDER BY reg_no ASC`,
       [regNos]
     );
@@ -5947,7 +5956,7 @@ app.delete('/admin/students', requireSuperAdmin, async (req, res, next) => {
     }
 
     const studentsResult = await pool.query(
-      `SELECT reg_no, full_name, stream, section, created_at
+      `SELECT BTRIM(reg_no) AS reg_no, full_name, stream, section, created_at
        FROM students
        ORDER BY reg_no ASC`
     );
@@ -5960,7 +5969,7 @@ app.delete('/admin/students', requireSuperAdmin, async (req, res, next) => {
     try {
       await client.query('BEGIN');
       for (const student of studentsResult.rows) {
-        await deleteStudentCascade(client, String(student.reg_no || '').trim().toUpperCase());
+        await deleteStudentCascade(client, normalizeRegNo(student.reg_no));
       }
       await client.query('COMMIT');
     } catch (err) {
