@@ -426,23 +426,6 @@ async function upsertStudentQuota(regNo) {
 }
 
 
-const backupTables = [
-  'subjects',
-  'staff_accounts',
-  'students',
-  'student_auth',
-  'student_password_history',
-  'staff_subject_assignments',
-  'student_subject_assignments',
-  'student_staff_subject_assignments',
-  'broadcast_messages',
-  'student_message_reads',
-  'qa_threads',
-  'qa_messages',
-  'submissions',
-  'official_materials',
-  'student_storage_quotas',
-];
 
 async function readTableForBackup(tableName) {
   const result = await pool.query(`SELECT * FROM ${tableName}`);
@@ -1685,23 +1668,7 @@ app.get('/staff/students', requireAuth('staff'), async (req, res, next) => {
   }
 });
 
-function normalizeManualAssessmentKey(value) {
-  const raw = String(value || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
-  if (raw === 'AL1') return 'AL1';
-  if (raw === 'AL2') return 'AL2';
-  if (raw === 'SSA1') return 'SSA1';
-  if (raw === 'SSA2' || raw === 'SSA') return 'SSA2';
-  return null;
-}
 
-function clampManualMark(value) {
-  if (value === null || value === undefined || value === '') return null;
-  const num = Number(value);
-  if (!Number.isFinite(num)) return null;
-  if (num < 0) return 0;
-  if (num > 20) return 20;
-  return Math.round(num * 100) / 100;
-}
 
 app.get('/staff/uhv-marks-entry', requireAuth('staff'), async (req, res, next) => {
   try {
