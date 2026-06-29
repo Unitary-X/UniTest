@@ -22,7 +22,7 @@ services:
       - unitest-net
 
   unitest-api:
-    image: unitest-api:local
+    image: ghcr.io/unitary-x/unitest-api:latest
     build:
       context: .
       dockerfile: api/Dockerfile
@@ -125,7 +125,7 @@ services:
       TZ: ${TZ}
 
   unitest-web:
-    image: unitest-web:local
+    image: ghcr.io/unitary-x/unitest-web:latest
     build:
       context: .
       dockerfile: nginx/Dockerfile

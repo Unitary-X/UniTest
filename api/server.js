@@ -4,197 +4,92 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
-const helmet = require('helmet');
 const { createClient } = require('redis');
-const { Pool } = require('pg');
 const XLSX = require('xlsx');
 const ExcelJS = require('exceljs');
 const { createAuthUtils } = require('./lib/auth-utils');
 
+// ── Extracted Modules ────────────────────────────────────────────────────────
+const env = require('./config/env');
+const {
+  uploadDir, sessionStoreFilePath, gradedReportFilePath, studentsFile,
+  allowedStudentUploadMimeTypes, allowedStudentUploadExtensions,
+  allowedStudentPptMimeTypes, allowedStudentPptExtensions, backupTables,
+} = require('./config/constants');
+const {
+  normalizeRegNo, normalizeStaffEmail, normalizeSubjectCode,
+  normalizeManualAssessmentKey, clampManualMark,
+} = require('./lib/normalizers');
+const {
+  extractUploadFileName, toPublicImageUrl, normalizeImagesForStorage, normalizeUploadUrl,
+} = require('./lib/file-utils');
+const {
+  sanitize, createStoredUploadName, sanitizePathSegment,
+  writeFileToStorage: _writeFileToStorage, toUploadsPublicUrl,
+  signFileAccessSignature: _signFileAccessSignature,
+  verifyFileAccessSignature: _verifyFileAccessSignature,
+  createSignedFileUrl: _createSignedFileUrl,
+  listFilesRecursively, cleanupUploadDiskCopies: _cleanupUploadDiskCopies,
+} = require('./lib/storage');
+const { writeAuditLog: _writeAuditLog } = require('./lib/audit');
+const {
+  isSuperAdminSession, defaultPermissionsForRole,
+  getStaffPermissions: _getStaffPermissions,
+  hasPermission: _hasPermission,
+} = require('./lib/permissions');
+const { createSessionManager, redisSessionKeyPrefix } = require('./lib/session');
+const { createAuthMiddleware } = require('./middleware/auth');
+const { createLoginRateLimitMiddleware } = require('./middleware/rate-limit');
+const { createSecurityMiddleware } = require('./middleware/security');
+const { createPool } = require('./db/pool');
+
+// ── Destructure env config ───────────────────────────────────────────────────
+const {
+  port, authPepper, fileUrlSigningSecret, redisUrl, resyncToken,
+  sessionTtlHours, sessionIdleMinutes, retentionDays, studentQuotaBytesDefault,
+  passwordHashRounds, syncStudentsOnStartup, baselineAssignmentsOnStartup,
+  uhvAssignmentsOnStartup,
+  dbHost, dbPort, dbName, dbUser, dbPassword,
+  staffDefaultEmail, staffDefaultPassword, staffDefaultName, staffDefaultRole,
+  superAdminDefaultEmail, superAdminDefaultPassword, superAdminDefaultName, superAdminDefaultRole,
+  uhvStaffEmail, uhvStaffPassword, uhvStaffName, uhvStaffRole,
+} = env;
+
+// ── App & Core Dependencies ─────────────────────────────────────────────────
 const app = express();
-const port = Number(process.env.API_PORT || 3000);
-const uploadDir = process.env.UPLOAD_DIR || (process.platform === 'win32'
-  ? path.join(process.cwd(), 'data', 'uploads')
-  : '/data/uploads');
-const sessionStoreFilePath = process.env.AUTH_SESSION_STORE_FILE || path.join(uploadDir, '.auth-sessions.json');
-const gradedReportFilePath = process.env.GRADED_REPORT_FILE || path.join(uploadDir, 'graded-report.xlsx');
-const studentsFile = process.env.STUDENTS_FILE || '/app/students-db.js';
-const syncStudentsOnStartup = String(process.env.STUDENTS_SYNC_ON_STARTUP || 'true').trim().toLowerCase() !== 'false';
-const baselineAssignmentsOnStartup = String(process.env.BASELINE_ASSIGNMENTS_ON_STARTUP || 'false').trim().toLowerCase() !== 'false';
-const uhvAssignmentsOnStartup = String(process.env.UHV_ASSIGNMENTS_ON_STARTUP || 'false').trim().toLowerCase() !== 'false';
-const resyncToken = process.env.RESYNC_TOKEN || '';
-const authPepper = requiredEnv('AUTH_PEPPER');
-const fileUrlSigningSecret = requiredEnv('FILE_URL_SIGNING_SECRET');
-const redisUrl = requiredEnv('REDIS_URL');
-const sessionTtlHours = Number(process.env.AUTH_SESSION_TTL_HOURS || 24);
-const sessionIdleMinutes = Math.max(Number(process.env.AUTH_SESSION_IDLE_MINUTES || 30), 5);
-const retentionDays = Math.max(Number(process.env.RETENTION_DAYS || 90), 1);
-const studentQuotaBytesDefault = Number(process.env.STUDENT_QUOTA_BYTES || 500 * 1024 * 1024);
-const passwordHashRounds = Math.max(Number(process.env.PASSWORD_HASH_ROUNDS || 12), 10);
 const authUtils = createAuthUtils({ authPepper, passwordHashRounds, crypto, bcrypt });
 const { isBcryptHash } = authUtils;
 const redisClient = createClient({ url: redisUrl });
+const pool = createPool({ dbHost, dbPort, dbName, dbUser, dbPassword });
 
-function requiredEnv(name) {
-  const value = String(process.env[name] || '').trim();
-  if (!value) {
-    throw new Error(`Missing required environment variable: ${name}`);
-  }
-  return value;
-}
+// ── Bound wrappers (preserve original call signatures used throughout) ───────
+const writeAuditLog = (opts) => _writeAuditLog(pool, opts);
+const writeFileToStorage = (folder, name, buf) => _writeFileToStorage(uploadDir, folder, name, buf);
+const signFileAccessSignature = (fileName, exp) => _signFileAccessSignature(fileUrlSigningSecret, fileName, exp);
+const verifyFileAccessSignature = (fileName, exp, sig) => _verifyFileAccessSignature(fileUrlSigningSecret, fileName, exp, sig);
+const createSignedFileUrl = (storedName, ttlMs) => _createSignedFileUrl(fileUrlSigningSecret, storedName, ttlMs);
+const cleanupUploadDiskCopies = (fileNames) => _cleanupUploadDiskCopies(uploadDir, fileNames);
+const getStaffPermissions = (email, role) => _getStaffPermissions(pool, email, role);
+const hasPermission = (session, key) => _hasPermission(pool, session, key);
 
-const allowedStudentUploadMimeTypes = new Set([
-  'application/pdf',
-  'application/vnd.ms-powerpoint',
-  'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-  'image/png',
-  'image/jpeg',
-  'image/jpg',
-  'image/webp',
-  'image/heic',
-  'image/heif'
-]);
+// ── Session Manager ──────────────────────────────────────────────────────────
+const sessionManager = createSessionManager({
+  redisClient, authUtils, sessionStoreFilePath, sessionTtlHours, sessionIdleMinutes,
+});
+const {
+  createSession, resolveSessionByToken, getSessionFromRequest,
+  getLiveSessionsSnapshot, writeLegacySessionSnapshot, restoreLegacySessionSnapshotToRedis,
+} = sessionManager;
 
-const allowedStudentUploadExtensions = new Set(['.pdf', '.ppt', '.pptx', '.png', '.jpg', '.jpeg', '.webp', '.heic', '.heif']);
+// ── Auth & Security Middleware ───────────────────────────────────────────────
+const { requireAuth, requireSuperAdmin } = createAuthMiddleware(sessionManager);
+const loginRateLimitMiddleware = createLoginRateLimitMiddleware(redisClient);
 
-const allowedStudentPptMimeTypes = new Set([
-  'application/vnd.ms-powerpoint',
-  'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-]);
-
-const allowedStudentPptExtensions = new Set(['.ppt', '.pptx']);
-
-
-const staffDefaultEmail = requiredEnv('STAFF_DEFAULT_EMAIL').toLowerCase();
-const staffDefaultPassword = requiredEnv('STAFF_DEFAULT_PASSWORD');
-const staffDefaultName = process.env.STAFF_DEFAULT_NAME || 'System Admin';
-const staffDefaultRole = process.env.STAFF_DEFAULT_ROLE || 'Chemistry Teacher';
-const superAdminDefaultEmail = requiredEnv('SUPERADMIN_DEFAULT_EMAIL').toLowerCase();
-const superAdminDefaultPassword = requiredEnv('SUPERADMIN_DEFAULT_PASSWORD');
-const superAdminDefaultName = process.env.SUPERADMIN_DEFAULT_NAME || 'Unitary X';
-const superAdminDefaultRole = process.env.SUPERADMIN_DEFAULT_ROLE || 'Super Admin';
-
-// UHV staff account defaults
-const uhvStaffEmail = requiredEnv('UHV_STAFF_EMAIL').toLowerCase();
-const uhvStaffPassword = requiredEnv('UHV_STAFF_PASSWORD');
-const uhvStaffName = process.env.UHV_STAFF_NAME || 'Vijayakumar';
-const uhvStaffRole = process.env.UHV_STAFF_ROLE || 'UHV Teacher';
-
-app.use(helmet({
-  contentSecurityPolicy: {
-    directives: {
-      defaultSrc: ["'self'"],
-      imgSrc: ["'self'", 'data:', 'blob:'],
-      styleSrc: ["'self'", "'unsafe-inline'"],
-      scriptSrc: ["'self'"],
-      connectSrc: ["'self'"],
-      objectSrc: ["'none'"],
-      baseUri: ["'self'"],
-      frameAncestors: ["'none'"],
-    },
-  },
-  referrerPolicy: { policy: 'no-referrer' },
-  xContentTypeOptions: true,
-}));
+app.use(createSecurityMiddleware());
 app.use(express.json({ limit: '1mb' }));
 
-function extractUploadFileName(input) {
-  let raw = input;
-  if (raw && typeof raw === 'object') {
-    raw = raw.url || raw.src || raw.path || raw.name || '';
-  }
-  raw = String(raw || '').trim();
-  if (!raw) return '';
-  if (/^(data:|blob:)/i.test(raw)) return raw;
-
-  if (/^https?:\/\//i.test(raw)) {
-    try {
-      const parsed = new URL(raw);
-      raw = parsed.pathname || '';
-    } catch (_err) {
-      // ignore and continue best effort
-    }
-  }
-
-  raw = raw.split('?')[0].split('#')[0].replace(/\\/g, '/');
-
-  const markers = ['/api/files/', '/api/uploads/', '/uploads/', 'uploads/'];
-  for (const marker of markers) {
-    const idx = raw.toLowerCase().lastIndexOf(marker);
-    if (idx >= 0) {
-      const tail = raw.slice(idx + marker.length).replace(/^\/+/, '');
-      return decodeURIComponent(path.basename(tail));
-    }
-  }
-
-  return decodeURIComponent(path.basename(raw));
-}
-
-function toPublicImageUrl(input) {
-  const fileName = extractUploadFileName(input);
-  if (!fileName) return '';
-  if (/^(data:|blob:)/i.test(fileName)) return fileName;
-  return `/api/files/${encodeURIComponent(fileName)}`;
-}
-
-function normalizeImagesForStorage(value) {
-  if (!Array.isArray(value)) return [];
-  const unique = new Set();
-  const normalized = [];
-  for (const item of value) {
-    const fileName = extractUploadFileName(item);
-    if (!fileName || /^(data:|blob:)/i.test(fileName)) continue;
-    if (unique.has(fileName)) continue;
-    unique.add(fileName);
-    normalized.push(fileName);
-  }
-  return normalized;
-}
-
-function normalizeUploadUrl(url) {
-  const raw = String(url || '').trim();
-  if (!raw) return '';
-  if (/^(data:|blob:)/i.test(raw)) return raw;
-  if (/^https?:\/\//i.test(raw)) {
-    try {
-      const parsed = new URL(raw);
-      const marker = '/uploads/';
-      const idx = parsed.pathname.toLowerCase().lastIndexOf(marker);
-      if (idx >= 0) {
-        const tail = parsed.pathname.slice(idx + marker.length).replace(/^\/+/, '');
-        return `/api/files/${encodeURIComponent(path.basename(tail))}`;
-      }
-    } catch (_err) {
-      // Fall through to best-effort normalization below
-    }
-    return raw;
-  }
-  if (raw.startsWith('/api/files/')) return raw;
-  if (raw.startsWith('/api/uploads/')) {
-    return `/api/files/${encodeURIComponent(path.basename(raw))}`;
-  }
-  if (raw.startsWith('/uploads/')) {
-    return `/api/files/${encodeURIComponent(path.basename(raw))}`;
-  }
-  if (raw.startsWith('uploads/')) {
-    return `/api/files/${encodeURIComponent(path.basename(raw))}`;
-  }
-
-  // Handle Windows/local absolute paths by taking only file name.
-  if (/^[a-zA-Z]:[\\/]/.test(raw) || raw.includes('\\')) {
-    return `/api/files/${encodeURIComponent(path.basename(raw))}`;
-  }
-
-  // Handle any path that contains /uploads/ somewhere inside it.
-  const marker = '/uploads/';
-  const markerIdx = raw.toLowerCase().lastIndexOf(marker);
-  if (markerIdx >= 0) {
-    const tail = raw.slice(markerIdx + marker.length).replace(/^\/+/, '');
-    return `/api/files/${encodeURIComponent(path.basename(tail))}`;
-  }
-
-  return `/api/files/${encodeURIComponent(path.basename(raw.replace(/^\/+/, '')))}`;
-}
+// File utility functions: extractUploadFileName, toPublicImageUrl, normalizeImagesForStorage,
+// normalizeUploadUrl — imported from ./lib/file-utils
 
 app.get('/files/:name', async (req, res, next) => {
   const safeName = path.basename(String(req.params.name || ''));
@@ -254,151 +149,20 @@ app.get('/files/:name', async (req, res, next) => {
   }
 });
 
-function requireEnv(name) {
-  const value = process.env[name];
-  if (!value || !String(value).trim()) {
-    throw new Error(`Missing required environment variable: ${name}`);
-  }
-  return value;
-}
-
-const dbHost = requireEnv('DB_HOST');
-const dbPort = Number(requireEnv('DB_PORT'));
-const dbName = requireEnv('DB_NAME');
-const dbUser = requireEnv('DB_USER');
-const dbPassword = requireEnv('DB_PASSWORD');
-
-if (!Number.isFinite(dbPort) || dbPort <= 0) {
-  throw new Error('Invalid DB_PORT. It must be a positive number.');
-}
-
-const pool = new Pool({
-  host: dbHost,
-  port: dbPort,
-  database: dbName,
-  user: dbUser,
-  password: dbPassword,
-  max: 10,
-});
+// DB pool, env config, and redisSessionKeyPrefix — imported from ./db/pool, ./config/env, ./lib/session
 
 let dbReady = false;
 let excelRebuildInProgress = false;
-const redisSessionKeyPrefix = 'auth:session:';
 
 fs.mkdirSync(uploadDir, { recursive: true });
 fs.mkdirSync(path.dirname(gradedReportFilePath), { recursive: true });
 
-async function writeLegacySessionSnapshot() {
-  try {
-    const keys = await redisClient.keys(`${redisSessionKeyPrefix}*`);
-    const now = Date.now();
-    const rows = [];
-    for (const key of keys) {
-      const token = key.slice(redisSessionKeyPrefix.length);
-      const raw = await redisClient.get(key);
-      if (!raw) continue;
-      const parsed = JSON.parse(raw);
-      if (!parsed || Number(parsed.expiresAt || 0) <= now) continue;
-      rows.push({ token, ...parsed });
-    }
+// Session management (writeLegacySessionSnapshot, restoreLegacySessionSnapshotToRedis)
+// — imported from ./lib/session via sessionManager
 
-    const payload = {
-      version: 2,
-      generatedAt: new Date(now).toISOString(),
-      sessions: rows,
-    };
-
-    fs.mkdirSync(path.dirname(sessionStoreFilePath), { recursive: true });
-    fs.writeFileSync(sessionStoreFilePath, JSON.stringify(payload), 'utf8');
-  } catch (_err) {
-    // Best effort legacy snapshot to keep existing operational visibility.
-  }
-}
-
-async function restoreLegacySessionSnapshotToRedis() {
-  try {
-    if (!fs.existsSync(sessionStoreFilePath)) return;
-    const raw = fs.readFileSync(sessionStoreFilePath, 'utf8');
-    if (!raw.trim()) return;
-    const parsed = JSON.parse(raw);
-    const rows = Array.isArray(parsed?.sessions) ? parsed.sessions : [];
-    const now = Date.now();
-    for (const row of rows) {
-      const token = String(row?.token || '').trim();
-      const expiresAt = Number(row?.expiresAt || 0);
-      if (!token || expiresAt <= now) continue;
-      const ttlSec = Math.max(1, Math.floor((expiresAt - now) / 1000));
-      const payload = { ...row, expiresAt, lastSeenAt: row.lastSeenAt || now };
-      delete payload.token;
-      await redisClient.setEx(`${redisSessionKeyPrefix}${token}`, ttlSec, JSON.stringify(payload));
-    }
-  } catch (_err) {
-    // Legacy snapshot migration should never block startup.
-  }
-}
-
-const sanitize = (name) =>
-  name
-    .replace(/[^a-zA-Z0-9._-]/g, '_')
-    .replace(/_+/g, '_')
-    .slice(0, 120);
-
-function createStoredUploadName(originalName) {
-  const ext = path.extname(originalName || '').toLowerCase();
-  const base = sanitize(path.basename(originalName || 'file', ext));
-  const unique = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-  return `${base || 'file'}-${unique}${ext}`;
-}
-
-function sanitizePathSegment(value) {
-  return String(value || '')
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9._-]+/g, '-')
-    .replace(/-+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 80) || 'unknown';
-}
-
-function writeFileToStorage(relativeFolder, storedName, buffer) {
-  const safeFolder = String(relativeFolder || '').replace(/\\/g, '/').replace(/^\/+/, '');
-  const baseDir = path.resolve(uploadDir);
-  const absoluteFolder = path.resolve(baseDir, safeFolder);
-  if (!absoluteFolder.startsWith(baseDir)) {
-    throw new Error('Invalid storage folder');
-  }
-  fs.mkdirSync(absoluteFolder, { recursive: true });
-  const absolutePath = path.join(absoluteFolder, path.basename(storedName));
-  fs.writeFileSync(absolutePath, buffer);
-  return absolutePath;
-}
-
-function toUploadsPublicUrl(relativeFolder, storedName) {
-  const fileName = encodeURIComponent(path.basename(String(storedName || 'file')));
-  return `/api/files/${fileName}`;
-}
-
-function signFileAccessSignature(fileName, exp) {
-  const payload = `${String(fileName || '')}.${Number(exp || 0)}`;
-  return crypto.createHmac('sha256', fileUrlSigningSecret).update(payload).digest('hex');
-}
-
-function verifyFileAccessSignature(fileName, exp, sig) {
-  const expiry = Number(exp || 0);
-  if (!Number.isFinite(expiry) || expiry <= Date.now()) return false;
-  const expected = signFileAccessSignature(fileName, expiry);
-  const left = Buffer.from(String(expected));
-  const right = Buffer.from(String(sig || ''));
-  if (left.length !== right.length) return false;
-  return crypto.timingSafeEqual(left, right);
-}
-
-function createSignedFileUrl(storedName, ttlMs = 5 * 60 * 1000) {
-  const safeName = path.basename(String(storedName || ''));
-  const exp = Date.now() + Math.max(Number(ttlMs || 0), 30 * 1000);
-  const sig = signFileAccessSignature(safeName, exp);
-  return `/api/files/${encodeURIComponent(safeName)}?exp=${exp}&sig=${sig}`;
-}
+// Storage utilities (sanitize, createStoredUploadName, sanitizePathSegment, writeFileToStorage,
+// toUploadsPublicUrl, signFileAccessSignature, verifyFileAccessSignature, createSignedFileUrl)
+// — imported from ./lib/storage with bound wrappers above
 
 async function canReadUploadRecord(session, uploadRow) {
   if (!session || !uploadRow) return false;
@@ -425,45 +189,7 @@ async function canReadUploadRecord(session, uploadRow) {
   return false;
 }
 
-function cleanupUploadDiskCopies(fileNames) {
-  for (const rawName of fileNames || []) {
-    const safeName = path.basename(String(rawName || ''));
-    if (!safeName) continue;
-    const filePath = path.join(uploadDir, safeName);
-    try {
-      if (fs.existsSync(filePath)) {
-        fs.unlinkSync(filePath);
-      }
-    } catch (_err) {
-      // Best effort: uploads are persisted in DB; disk cleanup failure should not fail request.
-    }
-  }
-}
-
-function listFilesRecursively(baseDir) {
-  const rows = [];
-  if (!fs.existsSync(baseDir)) return rows;
-  const stack = [baseDir];
-  while (stack.length) {
-    const current = stack.pop();
-    let entries = [];
-    try {
-      entries = fs.readdirSync(current, { withFileTypes: true });
-    } catch (_err) {
-      continue;
-    }
-    for (const entry of entries) {
-      const absolutePath = path.join(current, entry.name);
-      if (entry.isDirectory()) {
-        stack.push(absolutePath);
-        continue;
-      }
-      if (!entry.isFile()) continue;
-      rows.push(absolutePath);
-    }
-  }
-  return rows;
-}
+// cleanupUploadDiskCopies, listFilesRecursively — imported from ./lib/storage with bound wrappers
 
 function isInternalTokenAuthorized(req) {
   const provided = String(req.header('x-resync-token') || '').trim();
@@ -586,131 +312,17 @@ async function recordStudentPasswordHistory(db, { regNo, passwordHash, source, c
   );
 }
 
-async function createSession(payload) {
-  const token = authUtils.createSessionToken();
-  const now = Date.now();
-  const expiresAt = now + (Math.max(sessionTtlHours, 1) * 60 * 60 * 1000);
-  const ttlSec = Math.max(1, Math.floor((expiresAt - now) / 1000));
-  const sessionPayload = { ...payload, expiresAt, lastSeenAt: now };
-  await redisClient.setEx(`${redisSessionKeyPrefix}${token}`, ttlSec, JSON.stringify(sessionPayload));
-  await writeLegacySessionSnapshot();
-  return token;
-}
+// Session functions (createSession, resolveSessionByToken, getSessionFromRequest)
+// — imported from ./lib/session via sessionManager
 
-async function resolveSessionByToken(token) {
-  const cleanToken = String(token || '').trim();
-  if (!cleanToken) return null;
-  const key = `${redisSessionKeyPrefix}${cleanToken}`;
-  const raw = await redisClient.get(key);
-  if (!raw) return null;
-  const session = JSON.parse(raw);
-  if (!session || Number(session.expiresAt || 0) <= Date.now()) {
-    await redisClient.del(key);
-    return null;
-  }
+// Auth middleware (requireAuth, requireSuperAdmin, isSuperAdminSession)
+// — imported from ./middleware/auth and ./lib/permissions
 
-  const now = Date.now();
-  const absoluteExpiry = Number(session.expiresAt || 0);
-  const idleExpiry = now + (sessionIdleMinutes * 60 * 1000);
-  const nextExpiry = Math.min(absoluteExpiry, idleExpiry);
-  const ttlSec = Math.max(1, Math.floor((nextExpiry - now) / 1000));
-  const refreshed = { ...session, lastSeenAt: now };
-  await redisClient.setEx(key, ttlSec, JSON.stringify(refreshed));
-  return { token: cleanToken, ...refreshed };
-}
+// Rate limiting (loginRateLimitMiddleware)
+// — imported from ./middleware/rate-limit
 
-function getBearerTokenFromRequest(req) {
-  const header = req.header('authorization') || '';
-  return header.startsWith('Bearer ') ? header.slice(7).trim() : '';
-}
-
-async function getSessionFromRequest(req) {
-  const bearerToken = getBearerTokenFromRequest(req);
-  if (bearerToken) {
-    return resolveSessionByToken(bearerToken);
-  }
-  return null;
-}
-
-function requireAuth(roles) {
-  const allowedRoles = Array.isArray(roles) ? roles : [roles];
-  return async (req, res, next) => {
-    try {
-      const session = await getSessionFromRequest(req);
-      if (!session) {
-        return res.status(401).json({ error: 'Unauthorized' });
-      }
-      if (allowedRoles.length && !allowedRoles.includes(session.role)) {
-        return res.status(403).json({ error: 'Forbidden' });
-      }
-      req.auth = session;
-      next();
-    } catch (err) {
-      next(err);
-    }
-  };
-}
-
-function isSuperAdminSession(session) {
-  const roleRaw = String(session?.staffRole || session?.roleName || '').toLowerCase();
-  return roleRaw === 'super admin' || roleRaw === 'superadmin';
-}
-
-async function requireSuperAdmin(req, res, next) {
-  try {
-    const session = await getSessionFromRequest(req);
-    if (!session) {
-      return res.status(401).json({ error: 'Unauthorized' });
-    }
-    const role = String(session.role || '').toLowerCase();
-    if ((role !== 'staff' && role !== 'superadmin') || !isSuperAdminSession(session)) {
-      return res.status(403).json({ error: 'Forbidden' });
-    }
-    req.auth = session;
-    next();
-  } catch (err) {
-    next(err);
-  }
-}
-
-async function loginRateLimitMiddleware(req, res, next) {
-  try {
-    const identifier = String(req.body?.regNo || req.body?.email || req.ip || '').toLowerCase().trim();
-    if (!identifier) {
-      return next();
-    }
-
-    const limiterKey = `login:ratelimit:${identifier}`;
-    const current = await redisClient.incr(limiterKey);
-    if (current === 1) {
-      await redisClient.expire(limiterKey, 15 * 60); // 15-minute window
-    }
-
-    const maxAttempts = 5;
-    if (current > maxAttempts) {
-      return res.status(429).json({
-        error: 'Too many login attempts. Try again in 15 minutes.',
-      });
-    }
-
-    req.loginAttemptCount = current;
-    next();
-  } catch (err) {
-    next(err);
-  }
-}
-
-function normalizeRegNo(value) {
-  return String(value || '').trim().toUpperCase();
-}
-
-function normalizeStaffEmail(value) {
-  return String(value || '').trim().toLowerCase();
-}
-
-function normalizeSubjectCode(value) {
-  return String(value || '').trim().toUpperCase();
-}
+// Normalizers (normalizeRegNo, normalizeStaffEmail, normalizeSubjectCode)
+// — imported from ./lib/normalizers
 
 async function buildSubjectCodeFromName(name) {
   const raw = normalizeSubjectCode(name)
@@ -732,72 +344,11 @@ async function buildSubjectCodeFromName(name) {
   return `${base}_${Date.now()}`;
 }
 
-function defaultPermissionsForRole(roleName) {
-  const role = String(roleName || '').trim().toLowerCase();
-  if (role === 'super admin' || role === 'superadmin') {
-    return {
-      manageStaff: true,
-      manageSubjects: true,
-      manageAssignments: true,
-      manageDatabase: true,
-      viewAuditLogs: true,
-      manageFeatureFlags: true,
-      sendAnnouncements: true,
-      uploadMaterials: true,
-    };
-  }
-  return {
-    manageStaff: false,
-    manageSubjects: false,
-    manageAssignments: false,
-    manageDatabase: false,
-    viewAuditLogs: false,
-    manageFeatureFlags: false,
-    sendAnnouncements: true,
-    uploadMaterials: true,
-  };
-}
+// Permissions (defaultPermissionsForRole, getStaffPermissions, hasPermission)
+// — imported from ./lib/permissions with bound wrappers
 
-async function getStaffPermissions(email, roleName) {
-  const normalizedEmail = normalizeStaffEmail(email);
-  const result = await pool.query(
-    `SELECT permissions_json
-     FROM role_policies
-     WHERE staff_email = $1`,
-    [normalizedEmail]
-  );
-  const defaults = defaultPermissionsForRole(roleName);
-  if (!result.rows.length || !result.rows[0].permissions_json) {
-    return defaults;
-  }
-  return { ...defaults, ...result.rows[0].permissions_json };
-}
-
-async function hasPermission(session, permissionKey) {
-  if (!session || session.role !== 'staff') return false;
-  if (isSuperAdminSession(session)) return true;
-  const perms = await getStaffPermissions(session.email, session.staffRole || session.roleName);
-  return Boolean(perms?.[permissionKey]);
-}
-
-async function writeAuditLog({ actor, action, targetType, targetId, beforeJson = null, afterJson = null }) {
-  try {
-    await pool.query(
-      `INSERT INTO audit_logs (actor, action, target_type, target_id, before_json, after_json)
-       VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb)`,
-      [
-        String(actor || ''),
-        String(action || ''),
-        String(targetType || ''),
-        targetId === undefined || targetId === null ? null : String(targetId),
-        beforeJson ? JSON.stringify(beforeJson) : null,
-        afterJson ? JSON.stringify(afterJson) : null,
-      ]
-    );
-  } catch (err) {
-    console.warn('[AUDIT] Failed to write audit log:', err.message);
-  }
-}
+// Audit logging (writeAuditLog)
+// — imported from ./lib/audit with bound wrapper
 
 async function getDefaultSubjectId() {
   const result = await pool.query(`SELECT id FROM subjects WHERE code = 'CHEMISTRY' LIMIT 1`);
