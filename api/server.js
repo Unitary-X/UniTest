@@ -425,29 +425,6 @@ async function upsertStudentQuota(regNo) {
   return { quotaBytes, usedBytes, remainingBytes: Math.max(quotaBytes - usedBytes, 0) };
 }
 
-async function getLiveSessionsSnapshot() {
-  const now = Date.now();
-  const keys = await redisClient.keys(`${redisSessionKeyPrefix}*`);
-  const rows = [];
-  for (const key of keys) {
-    const token = key.slice(redisSessionKeyPrefix.length);
-    const raw = await redisClient.get(key);
-    if (!raw) continue;
-    const session = JSON.parse(raw);
-    if (!session || Number(session.expiresAt || 0) <= now) continue;
-    rows.push({
-      token,
-      role: session.role,
-      regNo: session.regNo || null,
-      email: session.email || null,
-      name: session.name || null,
-      expiresAt: session.expiresAt,
-      lastSeenAt: session.lastSeenAt || null,
-      ttlMs: Math.max(Number(session.expiresAt || 0) - now, 0),
-    });
-  }
-  return rows;
-}
 
 const backupTables = [
   'subjects',
