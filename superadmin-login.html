@@ -45,8 +45,12 @@
                 </button>
             </form>
 
-            <section class="recover" aria-label="Recover Super Admin Password">
-                <div class="recover-title">Reset Super Admin Password</div>
+            <div style="text-align: center; margin-top: 20px;">
+                <button type="button" id="toggleRecoverBtn" style="background:none; border:none; color:var(--muted); font-size: 0.85rem; cursor:pointer; text-decoration: underline;">Forgot Password?</button>
+            </div>
+
+            <section class="recover" id="recoverSection" aria-label="Recover Super Admin Password" style="display: none; margin-top: 20px; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 20px;">
+                <div class="recover-title" style="font-size: 1.1rem; font-weight: 600; color: var(--text); margin-bottom: 15px;">Reset Super Admin Password</div>
 
                 <form id="recoverForm" class="recover-panel" novalidate aria-live="polite">
                     <p class="recover-help">Use your server RESYNC_TOKEN to reset the super admin password.</p>

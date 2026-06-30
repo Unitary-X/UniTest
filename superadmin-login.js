@@ -164,4 +164,14 @@
             setRecoverLoading(false);
         }
     });
+
+    const toggleBtn = document.getElementById('toggleRecoverBtn');
+    const recoverSection = document.getElementById('recoverSection');
+    if (toggleBtn && recoverSection) {
+        toggleBtn.addEventListener('click', () => {
+            const isHidden = recoverSection.style.display === 'none';
+            recoverSection.style.display = isHidden ? 'block' : 'none';
+            toggleBtn.textContent = isHidden ? 'Hide Password Reset' : 'Forgot Password?';
+        });
+    }
 })();
