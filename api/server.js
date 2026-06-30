@@ -5553,6 +5553,29 @@ app.post('/superadmin/password/change', requireSuperAdmin, async (req, res, next
   }
 });
 
+app.get('/api/admin/analytics', requireSuperAdmin, async (req, res, next) => {
+  try {
+    const studentRes = await pool.query('SELECT COUNT(*) AS count FROM students');
+    const staffRes = await pool.query('SELECT COUNT(*) AS count FROM staff_accounts');
+    
+    const liveSessions = await getLiveSessionsSnapshot();
+    
+    const activeLogins = liveSessions.length;
+    const activeStudents = liveSessions.filter(s => s.role === 'student').length;
+    const activeStaff = liveSessions.filter(s => ['staff', 'super admin', 'superadmin'].includes(String(s.role).toLowerCase())).length;
+
+    res.json({
+      totalStudents: parseInt(studentRes.rows[0].count, 10) || 0,
+      totalStaff: parseInt(staffRes.rows[0].count, 10) || 0,
+      activeLogins,
+      activeStudents,
+      activeStaff
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 app.post('/superadmin/password/recover', async (req, res, next) => {
   try {
     if (!resyncToken) {

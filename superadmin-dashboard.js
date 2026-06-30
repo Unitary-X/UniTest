@@ -582,36 +582,102 @@
             if (targetKey === 'passwords' && typeof refreshPasswords === 'function') {
                 refreshPasswords();
             }
+            if (targetKey === 'analytics' && typeof refreshAnalytics === 'function') {
+                refreshAnalytics();
+            }
+
+            // Clear active sub-btn highlights
+            document.querySelectorAll('.nav-sub-btn').forEach(b => b.classList.remove('active'));
+
+            // Hide all cards - content area stays blank until user clicks a sub-item
+            const panel = document.getElementById(`panel-${targetKey}`);
+            if (panel) {
+                if (targetKey !== 'analytics') {
+                    panel.querySelectorAll('.card').forEach(c => c.style.display = 'none');
+                    // Also hide mount container children
+                    panel.querySelectorAll('[id$="Mount"] > *').forEach(c => c.style.display = 'none');
+                } else {
+                    const overview = document.getElementById('analytics-overview');
+                    if (overview) overview.style.display = '';
+                }
+            }
+        }
+
+        function showSingleCard(targetKey, cardId) {
+            const targetEl = document.getElementById(cardId);
+            if (!targetEl) return;
+            // Find the parent container of the target card
+            const container = targetEl.parentElement;
+            // Hide ALL direct children of the container
+            Array.from(container.children).forEach(child => {
+                child.style.display = 'none';
+            });
+            // Show only the target card
+            targetEl.style.display = '';
+            window.scrollTo({ top: 0, behavior: 'smooth' });
         }
 
         menuButtons.forEach((btn) => {
             btn.addEventListener('click', () => {
                 activateMenuTarget(btn.dataset.menuTarget);
             });
+        });
 
-            // iOS/Android fallback: ensure touch can switch panels even if click is delayed.
-            btn.addEventListener('pointerup', (e) => {
-                if (e.pointerType === 'touch') {
-                    e.preventDefault();
-                    activateMenuTarget(btn.dataset.menuTarget);
+        document.querySelectorAll('[data-toggle]').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const targetId = `dropdown-${btn.dataset.toggle}`;
+                const dropdown = document.getElementById(targetId);
+                const caret = btn.querySelector('.caret');
+                if (dropdown) {
+                    const isHidden = dropdown.style.display === 'none' || !dropdown.style.display;
+                    dropdown.style.display = isHidden ? 'flex' : 'none';
+                    if (caret) caret.style.transform = isHidden ? 'rotate(180deg)' : 'rotate(0deg)';
                 }
             });
         });
 
-        const menuContainer = document.querySelector('.admin-menu');
-        if (menuContainer) {
-            menuContainer.addEventListener('touchend', (e) => {
-                const targetBtn = e.target.closest('.admin-menu-btn');
-                if (!targetBtn) return;
-                e.preventDefault();
-                activateMenuTarget(targetBtn.dataset.menuTarget);
-            }, { passive: false });
+        document.querySelectorAll('.nav-sub-btn').forEach(subBtn => {
+            subBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const targetKey = subBtn.dataset.menuTarget;
+                const scrollToId = subBtn.dataset.scrollTo;
+
+                // Switch to the correct panel without auto-selecting first sub-item
+                showPanel(targetKey);
+
+                // Trigger data refresh for the panel
+                if (targetKey === 'assignments' && typeof refreshAssignments === 'function') refreshAssignments();
+                if (targetKey === 'operations') {
+                    if (typeof refreshDbStatus === 'function') refreshDbStatus();
+                    if (typeof refreshSubjects === 'function') refreshSubjects();
+                }
+                if (targetKey === 'passwords' && typeof refreshPasswords === 'function') refreshPasswords();
+
+                // Highlight this sub-btn
+                document.querySelectorAll('.nav-sub-btn').forEach(b => b.classList.remove('active'));
+                subBtn.classList.add('active');
+
+                // Show only the clicked card
+                if (scrollToId) {
+                    setTimeout(() => {
+                        showSingleCard(targetKey, scrollToId);
+                    }, 50);
+                }
+            });
+        });
+
+        const sidebarToggle = document.getElementById('sidebarToggle');
+        if (sidebarToggle) {
+            sidebarToggle.addEventListener('click', () => {
+                document.querySelector('.shell').classList.toggle('sidebar-collapsed');
+            });
         }
 
         window.__openSuperadminPanel = activateMenuTarget;
 
-        // Initialize with first panel
-        activateMenuTarget('staff');
+        // Set default active panel
+        activateMenuTarget('analytics');
     }
 
     let refreshAssignments = () => { };
@@ -1198,7 +1264,7 @@
                 </div>
             </div>
             
-            <section class="card" style="margin-bottom:20px;border-color:var(--accent-3);">
+            <section class="card" id="live-data" style="margin-bottom:20px;border-color:var(--accent-3);">
                 <div class="head-row" style="margin-bottom:12px;">
                     <h3 style="font-size:1rem;margin:0;">Live Data Integrity</h3>
                     <span id="opsDbStatusTime" style="font-size:0.8rem;color:var(--muted);"></span>
@@ -1206,7 +1272,7 @@
                 <div id="opsDbStatus" class="list" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;"></div>
             </section>
 
-            <section class="card" style="margin-bottom:20px;border-color:var(--accent);">
+            <section class="card" id="live-users" style="margin-bottom:20px;border-color:var(--accent);">
                 <div class="head-row" style="margin-bottom:12px;">
                     <h3 style="font-size:1rem;margin:0;">Live Users On Website</h3>
                     <div style="display:flex;align-items:center;gap:10px;">
@@ -1255,14 +1321,14 @@
                 </form>
             </div>
 
-            <section class="card accounts-list-card" style="margin-top:20px;">
+            <section class="card accounts-list-card" id="active-subject-list" style="margin-top:20px;">
                 <div class="head-row">
                     <h3>Active Subject List</h3>
                 </div>
                 <div id="opsSubjectList" class="list"></div>
             </section>
 
-            <section class="card" style="margin-top:20px;">
+            <section class="card" id="security-audit-trail" style="margin-top:20px;">
                 <h3 style="margin-bottom:12px;">Security Audit Trail</h3>
                 <div id="opsAuditList" class="list"></div>
             </section>
@@ -1675,7 +1741,7 @@
                 </div>
             </div>
 
-            <section class="card" style="margin-bottom:20px;border-color:var(--accent-2);">
+            <section class="card" id="change-superadmin" style="margin-bottom:20px;border-color:var(--accent-2);">
                 <h3 style="margin-top:0;margin-bottom:12px;font-size:1rem;">Change Super Admin Password</h3>
                 <div class="row">
                     <div class="col">
@@ -1697,7 +1763,7 @@
                 <p id="saPasswordMsg" class="msg"></p>
             </section>
 
-            <section class="card" style="margin-bottom:20px;border-color:var(--accent);">
+            <section class="card" id="search-student" style="margin-bottom:20px;border-color:var(--accent);">
                 <div class="row">
                     <div class="col">
                         <label for="pwdSearch">Search Student</label>
@@ -1724,14 +1790,14 @@
                 <p class="meta" style="margin-top:8px;">Note: existing changed passwords cannot be revealed from secure hashes. Use temporary reset to view a new password.</p>
             </section>
 
-            <section class="card" style="margin-bottom:20px;border-color:var(--accent-3);">
+            <section class="card" id="password-status" style="margin-bottom:20px;border-color:var(--accent-3);">
                 <div class="head-row" style="margin-bottom:12px;">
                     <h3 style="font-size:1rem;margin:0;">Password Status Summary</h3>
                 </div>
                 <div id="pwdSummary" class="list" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px;"></div>
             </section>
 
-            <section class="card">
+            <section class="card" id="password-records">
                 <div class="head-row" style="margin-bottom:12px;">
                     <h3 style="font-size:1rem;margin:0;">Student Password Records</h3>
                     <input id="pwdQuickSearch" type="text" placeholder="Search by Name or Register Number" style="max-width:320px;" />
@@ -1997,5 +2063,70 @@
     } catch (err) {
         console.error('Password panel init failed:', err);
     }
+
+    // --- Analytics Panel Integration ---
+    let usersChartInstance = null;
+    window.refreshAnalytics = async function(isManualRefresh = false) {
+        const btn = document.getElementById('refreshAnalyticsBtn');
+        const originalContent = btn ? btn.innerHTML : 'Refresh Data';
+        if (btn && isManualRefresh) {
+            btn.disabled = true;
+            btn.innerHTML = `<svg style="animation: spin 1s linear infinite;" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 2v6h-6"></path><path d="M3 12a9 9 0 1 0 2.63-6.37L21 8"></path></svg> Refreshing...`;
+        }
+        
+        try {
+            const data = await apiJson('/api/admin/analytics');
+            
+            document.getElementById('metric-active-logins').textContent = data.activeLogins || 0;
+            document.getElementById('metric-total-students').textContent = data.totalStudents || 0;
+            document.getElementById('metric-total-staff').textContent = data.totalStaff || 0;
+            
+            const ctx = document.getElementById('usersChart');
+            if (ctx) {
+                if (usersChartInstance) usersChartInstance.destroy();
+                // Ensure Chart.js is loaded
+                if (typeof Chart !== 'undefined') {
+                    Chart.defaults.color = '#a1a1aa';
+                    usersChartInstance = new Chart(ctx, {
+                        type: 'doughnut',
+                        data: {
+                            labels: ['Students', 'Staff'],
+                            datasets: [{
+                                data: [data.totalStudents, data.totalStaff],
+                                backgroundColor: ['#0ef0d1', '#7c8aff'],
+                                borderWidth: 0,
+                                hoverOffset: 4
+                            }]
+                        },
+                        options: {
+                            responsive: true,
+                            maintainAspectRatio: false,
+                            plugins: {
+                                legend: { position: 'bottom', labels: { font: { size: 14 } } },
+                                title: { display: true, text: 'User Distribution', font: { size: 16 }, color: '#fff' }
+                            },
+                            cutout: '65%'
+                        }
+                    });
+                }
+            }
+            if (isManualRefresh && typeof toast === 'function') {
+                toast('Analytics data refreshed');
+            }
+        } catch (err) {
+            console.error('Error refreshing analytics:', err);
+            if (isManualRefresh && typeof toast === 'function') {
+                toast('Failed to refresh analytics');
+            }
+        } finally {
+            if (btn && isManualRefresh) {
+                btn.disabled = false;
+                btn.innerHTML = originalContent;
+            }
+        }
+    };
+
     refreshStaff();
+    // Refresh analytics immediately on startup
+    refreshAnalytics();
 })();

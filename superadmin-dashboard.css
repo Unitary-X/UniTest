@@ -49,10 +49,47 @@ body {
 .shell {
     position: relative;
     z-index: 1;
-    max-width: 1180px;
+    max-width: 1400px;
     margin: 0 auto;
     display: grid;
+    grid-template-columns: 280px 1fr;
+    gap: 24px;
+    align-items: start;
+    transition: grid-template-columns 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.shell.sidebar-collapsed {
+    grid-template-columns: 0px 1fr;
+    gap: 0px;
+}
+
+.sidebar {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    position: sticky;
+    top: 14px;
+    height: calc(100vh - 28px);
+    overflow-y: auto;
+    transition: opacity 0.2s, transform 0.3s, margin 0.3s;
+}
+
+.shell.sidebar-collapsed .sidebar {
+    opacity: 0;
+    pointer-events: none;
+    transform: translateX(-20px);
+    margin-right: -24px; /* compensate for the lost gap visually */
+}
+
+.sidebar::-webkit-scrollbar {
+    width: 0;
+}
+
+.content-area {
+    display: flex;
+    flex-direction: column;
     gap: 14px;
+    min-width: 0;
 }
 
 .page-shortcut-btn {
@@ -168,31 +205,75 @@ body {
 
 .admin-menu {
     display: flex;
-    flex-wrap: wrap;
+    flex-direction: column;
     gap: 10px;
     position: relative;
     z-index: 5;
     background: rgba(10, 16, 26, 0.45);
     border: 1px solid var(--line-soft);
     border-radius: 18px;
-    padding: 10px;
+    padding: 12px;
     backdrop-filter: blur(10px);
 }
 
 .admin-menu-btn {
+    text-align: left;
+    display: flex;
+    align-items: center;
+    width: 100%;
     border: 1px solid var(--line-soft);
     background: rgba(255, 255, 255, 0.02);
     color: var(--muted);
     position: relative;
     z-index: 6;
     border-radius: 12px;
-    padding: 10px 16px;
+    padding: 12px 16px;
     font-size: 0.85rem;
     font-weight: 800;
     cursor: pointer;
     touch-action: manipulation;
     -webkit-tap-highlight-color: transparent;
     transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.nav-group {
+    display: flex;
+    flex-direction: column;
+}
+
+.nav-dropdown {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding-left: 12px;
+    margin-top: 6px;
+    margin-bottom: 4px;
+}
+
+.nav-sub-btn {
+    text-align: left;
+    background: transparent;
+    border: none;
+    color: var(--muted);
+    padding: 8px 12px;
+    border-radius: 8px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+    border-left: 2px solid transparent;
+}
+
+.nav-sub-btn:hover {
+    color: var(--text);
+    background: rgba(255, 255, 255, 0.03);
+    border-left-color: var(--line-soft);
+}
+
+.nav-sub-btn.active {
+    color: var(--accent);
+    background: rgba(61, 217, 184, 0.08);
+    border-left-color: var(--accent);
 }
 
 .admin-menu-btn:hover {
@@ -276,15 +357,14 @@ body {
     border: none;
 }
 
-.footer-actions {
+.sidebar-footer {
     display: flex;
-    justify-content: space-between;
-    align-items: center;
+    flex-direction: column;
     background: rgba(10, 16, 26, 0.5);
     border: 1px solid var(--line-soft);
-    border-radius: 22px;
-    padding: 16px 24px;
-    margin-top: 10px;
+    border-radius: 18px;
+    padding: 12px;
+    margin-top: auto;
     backdrop-filter: blur(8px);
 }
 
@@ -294,6 +374,7 @@ body {
 }
 
 .logout-btn {
+    width: 100%;
     border: 1px solid rgba(255, 138, 162, 0.35);
     border-radius: 14px;
     padding: 12px 24px;
@@ -317,14 +398,22 @@ body {
 }
 
 @media (max-width: 849px) {
+    .shell {
+        grid-template-columns: 1fr;
+    }
+
+    .sidebar {
+        position: static;
+        height: auto;
+    }
+
+    .sidebar-footer {
+        margin-top: 10px;
+    }
+
     .row {
         flex-direction: column;
         gap: 8px;
-    }
-
-    .footer-actions {
-        flex-direction: column;
-        gap: 16px;
     }
 
     .nav-links {

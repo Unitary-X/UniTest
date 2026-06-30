@@ -10,42 +10,122 @@
         href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700;800&family=Syne:wght@600;700;800&display=swap"
         rel="stylesheet" />
     <link rel="stylesheet" href="superadmin-dashboard.css" />
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 
 <body>
     <div class="bg-noise" aria-hidden="true"></div>
-    <main class="shell">
-        <header class="top">
-            <div class="title-block">
+    <div class="layout-wrapper shell">
+        <aside class="sidebar">
+
+            <nav class="admin-menu sidebar-nav" aria-label="Super Admin Sections">
+                <div class="nav-group">
+                    <button type="button" class="admin-menu-btn active" data-menu-target="analytics" aria-selected="true">
+                        <span style="flex:1;">Overview & Analytics</span>
+                    </button>
+                </div>
+                <div class="nav-group">
+                    <button type="button" class="admin-menu-btn" data-menu-target="staff" aria-selected="false" data-toggle="staff">
+                        <span style="flex:1;">Staff & Imports</span> <span class="caret" style="font-size:0.8rem;transition:0.2s;">▼</span>
+                    </button>
+                    <div class="nav-dropdown" id="dropdown-staff" style="display:none;">
+                        <button type="button" class="nav-sub-btn" data-menu-target="staff" data-scroll-to="staff-accounts">Manage Staff Accounts</button>
+                        <button type="button" class="nav-sub-btn" data-menu-target="staff" data-scroll-to="batch-import">Student Batch Import</button>
+                        <button type="button" class="nav-sub-btn" data-menu-target="staff" data-scroll-to="manual-entry">Manual Student Entry</button>
+                        <button type="button" class="nav-sub-btn" data-menu-target="staff" data-scroll-to="registered-students">Registered Students</button>
+                        <button type="button" class="nav-sub-btn" data-menu-target="staff" data-scroll-to="registered-staff">Registered Staff Accounts</button>
+                    </div>
+                </div>
+                <button type="button" class="admin-menu-btn" data-menu-target="assignments" aria-selected="false">
+                    Teacher Assignments
+                </button>
+                <div class="nav-group">
+                    <button type="button" class="admin-menu-btn" data-menu-target="operations" aria-selected="false" data-toggle="operations">
+                        <span style="flex:1;">Operations & Subjects</span> <span class="caret" style="font-size:0.8rem;transition:0.2s;">▼</span>
+                    </button>
+                    <div class="nav-dropdown" id="dropdown-operations" style="display:none;">
+                        <button type="button" class="nav-sub-btn" data-menu-target="operations" data-scroll-to="live-data">Live Data Integrity</button>
+                        <button type="button" class="nav-sub-btn" data-menu-target="operations" data-scroll-to="live-users">Live Users On Website</button>
+                        <button type="button" class="nav-sub-btn" data-menu-target="operations" data-scroll-to="opsStaffActionForm">Staff Quick Actions</button>
+                        <button type="button" class="nav-sub-btn" data-menu-target="operations" data-scroll-to="opsSubjectForm">Subject Management</button>
+                        <button type="button" class="nav-sub-btn" data-menu-target="operations" data-scroll-to="active-subject-list">Active Subject List</button>
+                        <button type="button" class="nav-sub-btn" data-menu-target="operations" data-scroll-to="security-audit-trail">Security Audit Trail</button>
+                    </div>
+                </div>
+                <div class="nav-group">
+                    <button type="button" class="admin-menu-btn" data-menu-target="passwords" aria-selected="false" data-toggle="passwords">
+                        <span style="display:inline-flex;align-items:center;gap:6px;flex:1;">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                                <rect x="3" y="10" width="18" height="11" rx="2" ry="2"></rect>
+                                <path d="M7 10V7a5 5 0 0 1 10 0v3"></path>
+                            </svg>
+                            Password Management
+                        </span>
+                        <span class="caret" style="font-size:0.8rem;transition:0.2s;">▼</span>
+                    </button>
+                    <div class="nav-dropdown" id="dropdown-passwords" style="display:none;">
+                        <button type="button" class="nav-sub-btn" data-menu-target="passwords" data-scroll-to="change-superadmin">Change Super Admin Password</button>
+                        <button type="button" class="nav-sub-btn" data-menu-target="passwords" data-scroll-to="search-student">Update Student Password</button>
+                        <button type="button" class="nav-sub-btn" data-menu-target="passwords" data-scroll-to="password-status">Password Status Summary</button>
+                        <button type="button" class="nav-sub-btn" data-menu-target="passwords" data-scroll-to="password-records">Student Password Records</button>
+                    </div>
+                </div>
+            </nav>
+
+            <section class="sidebar-footer">
+                <button id="logoutBtn" class="logout-btn" type="button">Logout System</button>
+            </section>
+        </aside>
+
+        <main class="content-area">
+
+        <header class="top" style="display: flex; align-items: flex-start; gap: 15px; position: relative;">
+            <button id="sidebarToggle" style="background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); color: var(--text); cursor: pointer; padding: 8px; border-radius: 8px; display: flex; align-items: center; justify-content: center; margin-top: 5px; transition: all 0.2s;" title="Toggle Sidebar">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                    <line x1="9" y1="3" x2="9" y2="21"></line>
+                </svg>
+            </button>
+            <div class="title-block" style="flex: 1;">
                 <p class="eyebrow">UNITEST CONTROL HUB</p>
                 <h1>Super Admin Console</h1>
             </div>
             <p id="welcome">Welcome</p>
         </header>
 
-        <nav class="admin-menu" aria-label="Super Admin Sections">
-            <button type="button" class="admin-menu-btn active" data-menu-target="staff" aria-selected="true">Staff &
-                Imports</button>
-            <button type="button" class="admin-menu-btn" data-menu-target="assignments" aria-selected="false">Teacher
-                Assignments</button>
-            <button type="button" class="admin-menu-btn" data-menu-target="operations" aria-selected="false">Operations
-                & Subjects</button>
-            <button type="button" class="admin-menu-btn" data-menu-target="passwords" aria-selected="false">
-                <span style="display:inline-flex;align-items:center;gap:6px;">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                        aria-hidden="true">
-                        <rect x="3" y="10" width="18" height="11" rx="2" ry="2"></rect>
-                        <path d="M7 10V7a5 5 0 0 1 10 0v3"></path>
-                    </svg>
-                    Password Management
-                </span>
-            </button>
-        </nav>
+        <!-- ANALYTICS PANEL -->
+        <section class="menu-panel active" data-panel="analytics" id="panel-analytics">
+            <section class="card" id="analytics-overview">
+                <div class="head-row" style="margin-bottom: 20px;">
+                    <h2 style="margin:0;">System Analytics</h2>
+                    <button type="button" class="btn" id="refreshAnalyticsBtn" onclick="refreshAnalytics(true)" style="padding: 6px 12px; font-size: 0.9rem; transition: 0.2s; display: flex; align-items: center; gap: 6px;">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 2v6h-6"></path><path d="M3 12a9 9 0 1 0 2.63-6.37L21 8"></path></svg>
+                        Refresh Data
+                    </button>
+                </div>
+                <div class="metrics-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 24px; margin-bottom: 40px;">
+                    <div class="metric-card" style="background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); padding: 20px; border-radius: 12px; text-align: center; box-shadow: 0 4px 15px rgba(0,0,0,0.2);">
+                        <h3 style="margin: 0; font-size: 1rem; color: var(--muted); text-transform: uppercase; letter-spacing: 1px;">Active Logins</h3>
+                        <p id="metric-active-logins" style="font-size: 2.5rem; font-weight: 800; margin: 10px 0 0; color: var(--accent);">--</p>
+                    </div>
+                    <div class="metric-card" style="background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); padding: 20px; border-radius: 12px; text-align: center; box-shadow: 0 4px 15px rgba(0,0,0,0.2);">
+                        <h3 style="margin: 0; font-size: 1rem; color: var(--muted); text-transform: uppercase; letter-spacing: 1px;">Total Students</h3>
+                        <p id="metric-total-students" style="font-size: 2.5rem; font-weight: 800; margin: 10px 0 0; color: var(--accent-3);">--</p>
+                    </div>
+                    <div class="metric-card" style="background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); padding: 20px; border-radius: 12px; text-align: center; box-shadow: 0 4px 15px rgba(0,0,0,0.2);">
+                        <h3 style="margin: 0; font-size: 1rem; color: var(--muted); text-transform: uppercase; letter-spacing: 1px;">Total Staff</h3>
+                        <p id="metric-total-staff" style="font-size: 2.5rem; font-weight: 800; margin: 10px 0 0; color: var(--text);">--</p>
+                    </div>
+                </div>
+                <div class="chart-container" style="background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.1); padding: 30px; border-radius: 12px; max-width: 700px; height: 400px; margin: 0 auto; box-shadow: inset 0 2px 10px rgba(0,0,0,0.3);">
+                    <canvas id="usersChart"></canvas>
+                </div>
+            </section>
+        </section>
 
         <!-- STAFF PANEL -->
-        <section class="menu-panel active" data-panel="staff" id="panel-staff">
-            <div class="grid">
-                <section class="card">
+        <section class="menu-panel" data-panel="staff" id="panel-staff">
+                <section class="card" id="staff-accounts" style="display:none;">
                     <h2>Manage Staff Accounts</h2>
                     <form id="staffForm" class="form" novalidate>
                         <div class="row">
@@ -73,7 +153,7 @@
                     </form>
                 </section>
 
-                <section class="card">
+                <section class="card" id="batch-import" style="display:none;">
                     <h2>Student Batch Import</h2>
                     <form id="importForm" class="form" novalidate>
                         <label for="stream">Target Department (optional)</label>
@@ -89,13 +169,13 @@
 
                         <div class="btn-group">
                             <button class="btn ghost" id="downloadTemplateBtn" type="button">Download Template</button>
-                            <button class="btn action" type="submit">Upload & Import</button>
+                            <button class="btn action" type="submit">Upload &amp; Import</button>
                         </div>
                         <p id="importMsg" class="msg"></p>
                     </form>
                 </section>
 
-                <section class="card">
+                <section class="card" id="manual-entry" style="display:none;">
                     <h2>Manual Student Entry</h2>
                     <form id="manualImportForm" class="form" novalidate>
                         <div class="row">
@@ -125,7 +205,7 @@
                     </form>
                 </section>
 
-                <section class="card accounts-list-card" style="grid-column: 1 / -1;">
+                <section class="card accounts-list-card" id="registered-students" style="display:none;">
                     <div class="head-row">
                         <h2>Registered Students</h2>
                         <div class="btn-group" style="max-width: 680px;">
@@ -138,15 +218,14 @@
                     </div>
                     <div id="studentsList" class="list"></div>
                 </section>
-            </div>
 
-            <section class="card accounts-list-card">
-                <div class="head-row">
-                    <h2>Registered Staff Accounts</h2>
-                    <button class="btn ghost" id="refreshBtn" type="button">Sync Data</button>
-                </div>
-                <div id="staffList" class="list"></div>
-            </section>
+                <section class="card accounts-list-card" id="registered-staff" style="display:none;">
+                    <div class="head-row">
+                        <h2>Registered Staff Accounts</h2>
+                        <button class="btn ghost" id="refreshBtn" type="button">Sync Data</button>
+                    </div>
+                    <div id="staffList" class="list"></div>
+                </section>
         </section>
 
         <!-- ASSIGNMENTS PANEL (Populated by JS) -->
@@ -176,10 +255,8 @@
             </div>
         </section>
 
-        <section class="footer-actions">
-            <button id="logoutBtn" class="logout-btn" type="button">Logout System</button>
-        </section>
-    </main>
+        </main>
+    </div>
 
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
